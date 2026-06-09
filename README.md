@@ -9,7 +9,22 @@ Built in 2026 with Swift. No subscriptions, no telemetry, no ads.
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M5-orange)](https://support.apple.com/en-us/116943)
 
+> **Performance-focused fork.** This is a fork of the original **[ThermalForge by ProducerGuy](https://github.com/ProducerGuy/ThermalForge)** — all credit for the app goes to the upstream author. This fork adds CPU and memory optimizations (see **[Performance & Stability](#performance--stability-this-fork)**); everything else tracks upstream.
+
 ---
+
+## Performance & Stability (this fork)
+
+This fork profiles and optimizes the always-on daemon and menu-bar app. On the test machine (MacBook Pro M2 Pro), the menu-bar app's CPU dropped from **~12.4% to ~3.6%** (≈71%), and a multi-day daemon memory leak was eliminated — with the fan-control logic, profile curves, and the 95°C safety override left byte-for-byte identical to upstream. All 24 tests pass.
+
+| Change | What it does | Effect |
+|---|---|---|
+| **Thermal tick 100 ms → 250 ms** | Fan control follows thermal mass that moves over seconds, so a 10 Hz tick was unnecessary. `tickInterval` is now the single source of truth; the monitor (2 s) and UI (1 s) cadences and the ramp-governor math all derive from it, and the dispatch timer is given leeway so the kernel can coalesce its wakeups. | ~60% fewer SMC/IOKit round trips per second; fewer idle wakeups |
+| **SMC key-info caching** | `readKey()` made two kernel round trips per call — a `readKeyInfo` to fetch the firmware-static data size, then the value read. That size is now cached per key, so repeat reads skip the first syscall. Absence is never cached, so a transiently-failed sensor can never be permanently latched as missing — the 95°C override keeps seeing every sensor. | Halves IOKit round trips on the hot `status()` path |
+| **`@Observable` menu-bar UI** | `AppState` moved from `ObservableObject` to `@Observable` with publish-on-change. Previously, reassigning the full status struct every tick fired `objectWillChange` and forced the always-visible menu-bar label to re-render even with the dropdown closed. Now a view invalidates only on the properties it actually reads, and the temperature label republishes only when its displayed integer degree changes. | Eliminates the SwiftUI redraw churn that dominated the app's CPU |
+| **Daemon autorelease-pool fix** | The daemon's two infinite GCD loops never drained their autorelease pool, so `NSLog`/`os_log`-internal objects (`NSURL`/`CFString`/`_FileCache`) accumulated to ~4.8 GB resident over a 7-day uptime. Each loop body is now wrapped in `autoreleasepool`. | Daemon memory stays bounded |
+
+CPU figures are workload- and machine-dependent. None of these changes alter fan behavior, profile curves, or safety thresholds.
 
 ## Why ThermalForge?
 
@@ -58,7 +73,7 @@ Tools like **Macs Fan Control** and **TG Pro** charge $15–$20 for fan control 
 
 Every profile uses a proportional curve with a per-profile curve shape — fans ramp gradually with temperature, not as binary switches. All profiles share a unified 50°C off threshold (matching Apple's observed behavior). Each profile has its own sustained trigger duration — fans only engage after temperature stays above the start threshold for a profile-specific number of seconds, filtering transient spikes that resolve on their own. Reacting to transient spikes would cause the start/stop cycling that is the #1 cause of fan bearing wear (source: [Analog Devices fan control](https://www.analog.com/en/analog-dialogue/articles/how-to-control-fan-speed.html)).
 
-Thermal polling runs at 100ms (matching Apple's own thermalmonitord cadence) for smooth fan transitions. Each profile has its own ramp rates and curve shape tuned to its purpose. Ramp governor design sourced from [MAX31760 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/max31760.pdf) and [Microchip AN771](https://ww1.microchip.com/downloads/en/appnotes/00771a.pdf).
+Thermal polling runs at 250ms by default in this fork (upstream uses 100ms) — fans track thermal mass that changes over seconds, so the slower tick keeps transitions smooth while cutting CPU. The interval is configurable via the CLI `--interval` flag, and all ramp and sustained-trigger math derives from it. Each profile has its own ramp rates and curve shape tuned to its purpose. Ramp governor design sourced from [MAX31760 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/max31760.pdf) and [Microchip AN771](https://ww1.microchip.com/downloads/en/appnotes/00771a.pdf).
 
 | Profile | Fans off | Fans start | Ceiling | Max fan | Curve | Sustained trigger | Behavior |
 |---|---|---|---|---|---|---|---|
@@ -87,10 +102,12 @@ sudo thermalforge install
 
 The first command installs the CLI and the menu bar app to `/Applications`. The second sets up a background daemon so the app can control fans without needing sudo every time. You only run it once.
 
+> The Homebrew tap distributes the **upstream** release. To get this fork's performance optimizations, build from source (Option B).
+
 ### Option B: From source
 
 ```bash
-git clone https://github.com/ProducerGuy/ThermalForge.git
+git clone https://github.com/arthur-hsu/ThermalForge.git
 cd ThermalForge
 ./setup.sh
 ```
