@@ -50,9 +50,9 @@ public final class ThermalMonitor {
     /// of wall-clock, regardless of tick rate.
     private var monitorCadence: Int { max(1, Int((2.0 / tickInterval).rounded())) }
 
-    /// UI update cadence in ticks: onUpdate fires every ~500ms of wall-clock —
-    /// smooth UI without excessive redraws, regardless of tick rate.
-    private var uiUpdateCadence: Int { max(1, Int((0.5 / tickInterval).rounded())) }
+    /// UI update cadence in ticks: onUpdate fires every ~1s of wall-clock,
+    /// regardless of tick rate. A menu-bar readout needs no sub-second refresh.
+    private var uiUpdateCadence: Int { max(1, Int((1.0 / tickInterval).rounded())) }
 
     private var tickCounter = 0
 
